@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Creator Pulse</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 32px; }
+  h1 { font-size: 1.5rem; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 24px 0; }
+  .card { background: #161a21; border: 1px solid #262b35; border-radius: 12px; padding: 18px 22px; min-width: 160px; }
+  .card .label { color: #9aa3af; font-size: 0.85rem; text-transform: uppercase; }
+  .card .value { font-size: 1.6rem; font-weight: 600; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #262b35; font-size: 0.9rem; }
+  th { color: #9aa3af; font-weight: 500; }
+  a { color: #7c9eff; text-decoration: none; }
+  .empty { color: #9aa3af; margin-top: 40px; }
+  code { background: #1d222b; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>Creator Pulse — Özet</h1>
+  <div class="cards" id="cards"></div>
+  <table id="table" style="display:none">
+    <thead>
+      <tr><th>Platform</th><th>Başlık</th><th>Beğeni</th><th>Yorum</th><th>İzlenme</th></tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none">
+    Henüz veri yok. Bir kanal senkronize etmek için örnek:
+    <br><code>curl -X POST "http://localhost:8000/sync/youtube?handle=MKBHD"</code>
+  </div>
+
+<script>
+async function load() {
+  const res = await fetch('/api/metrics');
+  const data = await res.json();
+
+  const cardsEl = document.getElementById('cards');
+  const platforms = Object.keys(data.summary_by_platform);
+  if (platforms.length === 0) {
+    document.getElementById('empty').style.display = 'block';
+    return;
+  }
+
+  platforms.forEach(p => {
+    const s = data.summary_by_platform[p];
+    cardsEl.innerHTML += `
+      <div class="card">
+        <div class="label">${p}</div>
+        <div class="value">${s.views.toLocaleString()} izlenme</div>
+        <div class="label" style="margin-top:8px">${s.likes.toLocaleString()} beğeni · ${s.comments.toLocaleString()} yorum · ${s.content_count} içerik</div>
+      </div>`;
+  });
+
+  const tbody = document.getElementById('table-body');
+  data.content.forEach(c => {
+    tbody.innerHTML += `
+      <tr>
+        <td>${c.platform}</td>
+        <td><a href="${c.url}" target="_blank">${c.title || c.url}</a></td>
+        <td>${c.likes.toLocaleString()}</td>
+        <td>${c.comments.toLocaleString()}</td>
+        <td>${c.views.toLocaleString()}</td>
+      </tr>`;
+  });
+  document.getElementById('table').style.display = 'table';
+}
+load();
+</script>
+</body>
+</html>
