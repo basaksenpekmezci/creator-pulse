@@ -11,6 +11,8 @@ Bu modüldeki fonksiyonlar mümkün olduğunca az çağrı yapacak şekilde
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import httpx
 
 from app.config import get_settings
@@ -92,6 +94,20 @@ def fetch_recent_video_ids(channel_id: str, max_results: int = 25) -> list[str]:
     return [item["contentDetails"]["videoId"] for item in items]
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    """YouTube API tarihleri '2024-05-01T12:00:00Z' formatında ISO8601 string
+    döndürür. Veritabanı modelimiz (models.py) bunu gerçek bir Python
+    datetime nesnesi olarak bekliyor — string olarak geçersek SQLite katmanı
+    'SQLite DateTime type only accepts Python datetime and date objects'
+    hatasıyla çöküyor (yakalanmamış bir hata olduğu için 500 dönüyordu)."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def fetch_video_stats(video_ids: list[str]) -> list[dict]:
     """Verilen video id'leri için başlık + istatistikleri tek çağrıda döndürür
     (videos.list en fazla 50 id kabul eder, 1 unit harcar)."""
@@ -117,7 +133,7 @@ def fetch_video_stats(video_ids: list[str]) -> list[dict]:
                 "likes": int(stats.get("likeCount", 0)),
                 "comments": int(stats.get("commentCount", 0)),
                 "views": int(stats.get("viewCount", 0)),
-                "published_at": snippet.get("publishedAt"),
+                "published_at": _parse_datetime(snippet.get("publishedAt")),
             }
         )
     return results
