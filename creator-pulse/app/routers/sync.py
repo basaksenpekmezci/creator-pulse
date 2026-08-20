@@ -19,12 +19,11 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 def sync_youtube(handle: str, db: Session = Depends(get_db)):
     """Örnek: POST /sync/youtube?handle=MKBHD"""
     try:
-        items = youtube.sync_channel(handle)
+        channel_id, items = youtube.sync_channel_with_id(handle)
     except youtube.YouTubeConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     user = crud.get_or_create_default_user(db)
-    channel_id = youtube.resolve_channel_id(handle)
     account = crud.get_or_create_platform_account(
         db, user, platform="youtube", external_account_id=channel_id, display_name=handle
     )
