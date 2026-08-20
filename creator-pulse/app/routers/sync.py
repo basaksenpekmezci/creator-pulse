@@ -20,14 +20,18 @@ def sync_youtube(handle: str, db: Session = Depends(get_db)):
     """Örnek: POST /sync/youtube?handle=MKBHD"""
     try:
         channel_id, items = youtube.sync_channel_with_id(handle)
+
+        user = crud.get_or_create_default_user(db)
+        account = crud.get_or_create_platform_account(
+            db, user, platform="youtube", external_account_id=channel_id, display_name=handle
+        )
+        saved = crud.upsert_metrics(db, account, items)
     except youtube.YouTubeConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - geliştirme aşamasında ham hatayı
+        # göstermek, sebepsiz 500'lerle uğraşmaktan çok daha faydalı.
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
 
-    user = crud.get_or_create_default_user(db)
-    account = crud.get_or_create_platform_account(
-        db, user, platform="youtube", external_account_id=channel_id, display_name=handle
-    )
-    saved = crud.upsert_metrics(db, account, items)
     return {"platform": "youtube", "channel": handle, "videos_synced": saved}
 
 
@@ -39,12 +43,14 @@ def sync_instagram(ig_account_id: str, access_token: str, db: Session = Depends(
     şimdilik manuel test için parametre olarak alıyor."""
     try:
         items = instagram.sync_account(ig_account_id, access_token)
-    except Exception as exc:  # noqa: BLE001 - dış API hatalarını olduğu gibi ilet
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    user = crud.get_or_create_default_user(db)
-    account = crud.get_or_create_platform_account(
-        db, user, platform="instagram", external_account_id=ig_account_id
-    )
-    saved = crud.upsert_metrics(db, account, items)
+        user = crud.get_or_create_default_user(db)
+        account = crud.get_or_create_platform_account(
+            db, user, platform="instagram", external_account_id=ig_account_id
+        )
+        saved = crud.upsert_metrics(db, account, items)
+    except Exception as exc:  # noqa: BLE001 - geliştirme aşamasında ham hatayı
+        # göstermek, sebepsiz 500'lerle uğraşmaktan çok daha faydalı.
+        raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}") from exc
+
     return {"platform": "instagram", "account": ig_account_id, "posts_synced": saved}
