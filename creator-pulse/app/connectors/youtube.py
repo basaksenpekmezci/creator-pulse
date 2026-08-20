@@ -32,31 +32,48 @@ def _api_key() -> str:
     return settings.youtube_api_key
 
 
+def _get(url: str, params: dict) -> dict:
+    """Tüm YouTube API GET çağrılarının ortak noktası. httpx/HTTP hatalarını
+    ham haliyle sızdırmak yerine anlamlı bir YouTubeConnectorError'a çevirir
+    (aksi halde FastAPI tarafında yakalanamayıp genel 500 hatası dönerdi)."""
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(url, params=params)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:300]
+        raise YouTubeConnectorError(
+            f"YouTube API hata döndürdü (HTTP {exc.response.status_code}): {detail}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise YouTubeConnectorError(f"YouTube API'ye ulaşılamadı: {exc}") from exc
+    return resp.json()
+
+
 def resolve_channel_id(handle_or_id: str) -> str:
     """'@kullaniciadi' gibi bir handle ya da doğrudan channel id verildiğinde
     gerçek channel id'yi döndürür."""
     if handle_or_id.startswith("UC"):
         return handle_or_id
 
-    params = {"key": _api_key(), "part": "id"}
     handle = handle_or_id if handle_or_id.startswith("@") else f"@{handle_or_id}"
-    params["forHandle"] = handle
+    params = {"key": _api_key(), "part": "id", "forHandle": handle}
 
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(f"{YOUTUBE_API_BASE}/channels", params=params)
-    resp.raise_for_status()
-    items = resp.json().get("items", [])
+    data = _get(f"{YOUTUBE_API_BASE}/channels", params)
+    items = data.get("items", [])
     if not items:
-        raise YouTubeConnectorError(f"Kanal bulunamadı: {handle_or_id}")
+        raise YouTubeConnectorError(
+            f"Kanal bulunamadı: {handle_or_id}. Kanalının gerçek @handle'ını "
+            "YouTube Studio → Özelleştirme → Temel bilgiler'den kontrol et "
+            "(Türkçe karakter içermeyen, YouTube'un sana verdiği tam handle'ı kullan)."
+        )
     return items[0]["id"]
 
 
 def _get_uploads_playlist_id(channel_id: str) -> str:
     params = {"key": _api_key(), "part": "contentDetails", "id": channel_id}
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(f"{YOUTUBE_API_BASE}/channels", params=params)
-    resp.raise_for_status()
-    items = resp.json().get("items", [])
+    data = _get(f"{YOUTUBE_API_BASE}/channels", params)
+    items = data.get("items", [])
     if not items:
         raise YouTubeConnectorError(f"Kanal bulunamadı: {channel_id}")
     return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
@@ -70,10 +87,8 @@ def fetch_recent_video_ids(channel_id: str, max_results: int = 25) -> list[str]:
         "playlistId": playlist_id,
         "maxResults": min(max_results, 50),
     }
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(f"{YOUTUBE_API_BASE}/playlistItems", params=params)
-    resp.raise_for_status()
-    items = resp.json().get("items", [])
+    data = _get(f"{YOUTUBE_API_BASE}/playlistItems", params)
+    items = data.get("items", [])
     return [item["contentDetails"]["videoId"] for item in items]
 
 
@@ -88,12 +103,10 @@ def fetch_video_stats(video_ids: list[str]) -> list[dict]:
         "part": "snippet,statistics",
         "id": ",".join(video_ids[:50]),
     }
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(f"{YOUTUBE_API_BASE}/videos", params=params)
-    resp.raise_for_status()
+    data = _get(f"{YOUTUBE_API_BASE}/videos", params)
 
     results = []
-    for item in resp.json().get("items", []):
+    for item in data.get("items", []):
         stats = item.get("statistics", {})
         snippet = item.get("snippet", {})
         results.append(
@@ -116,3 +129,14 @@ def sync_channel(handle_or_id: str, max_results: int = 25) -> list[dict]:
     channel_id = resolve_channel_id(handle_or_id)
     video_ids = fetch_recent_video_ids(channel_id, max_results=max_results)
     return fetch_video_stats(video_ids)
+
+
+def sync_channel_with_id(handle_or_id: str, max_results: int = 25) -> tuple[str, list[dict]]:
+    """sync_channel ile aynı işi yapar ama channel_id'yi de birlikte döndürür.
+    Router'ın ayrıca ikinci bir resolve_channel_id çağrısı yapmasına gerek
+    kalmaz (önceden bu ikinci çağrı try/except dışındaydı ve olası bir
+    YouTube API hatasında genel/anlamsız bir 500 hatasına yol açıyordu)."""
+    channel_id = resolve_channel_id(handle_or_id)
+    video_ids = fetch_recent_video_ids(channel_id, max_results=max_results)
+    items = fetch_video_stats(video_ids)
+    return channel_id, items
