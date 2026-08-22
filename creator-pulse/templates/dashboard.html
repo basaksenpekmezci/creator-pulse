@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -10,6 +11,13 @@
   .card { background: #161a21; border: 1px solid #262b35; border-radius: 12px; padding: 18px 22px; min-width: 160px; }
   .card .label { color: #9aa3af; font-size: 0.85rem; text-transform: uppercase; }
   .card .value { font-size: 1.6rem; font-weight: 600; margin-top: 4px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .sort-btn {
+    background: #161a21; border: 1px solid #262b35; color: #9aa3af;
+    padding: 8px 14px; border-radius: 8px; font-size: 0.85rem; cursor: pointer;
+  }
+  .sort-btn:hover { border-color: #3a4150; color: #e6e8eb; }
+  .sort-btn.active { background: #2d3a63; border-color: #4a5fa5; color: #e6e8eb; }
   table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #262b35; font-size: 0.9rem; }
   th { color: #9aa3af; font-weight: 500; }
@@ -21,9 +29,18 @@
 <body>
   <h1>Creator Pulse — Özet</h1>
   <div class="cards" id="cards"></div>
+
+  <div class="controls" id="controls" style="display:none">
+    <button class="sort-btn" data-sort="views">İzlenmeye göre</button>
+    <button class="sort-btn" data-sort="likes">Beğeniye göre</button>
+    <button class="sort-btn" data-sort="comments">Yoruma göre</button>
+    <button class="sort-btn" data-sort="total">Toplam etkileşime göre</button>
+    <button class="sort-btn" data-sort="newest">En yeniye göre</button>
+  </div>
+
   <table id="table" style="display:none">
     <thead>
-      <tr><th>Platform</th><th>Başlık</th><th>Beğeni</th><th>Yorum</th><th>İzlenme</th></tr>
+      <tr><th>Platform</th><th>Başlık</th><th>Beğeni</th><th>Yorum</th><th>İzlenme</th><th>Tarih</th></tr>
     </thead>
     <tbody id="table-body"></tbody>
   </table>
@@ -33,6 +50,57 @@
   </div>
 
 <script>
+let contentData = [];
+let currentSort = 'views';
+
+const SORTERS = {
+  views:    (a, b) => b.views - a.views,
+  likes:    (a, b) => b.likes - a.likes,
+  comments: (a, b) => b.comments - a.comments,
+  total:    (a, b) => (b.likes + b.comments + b.views) - (a.likes + a.comments + a.views),
+  newest:   (a, b) => {
+    // Tarihi olmayan içerikler en sona düşsün.
+    if (!a.published_at && !b.published_at) return 0;
+    if (!a.published_at) return 1;
+    if (!b.published_at) return -1;
+    return new Date(b.published_at) - new Date(a.published_at);
+  },
+};
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function renderTable() {
+  const sorted = [...contentData].sort(SORTERS[currentSort]);
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  sorted.forEach(c => {
+    tbody.innerHTML += `
+      <tr>
+        <td>${c.platform}</td>
+        <td><a href="${c.url}" target="_blank">${c.title || c.url}</a></td>
+        <td>${c.likes.toLocaleString()}</td>
+        <td>${c.comments.toLocaleString()}</td>
+        <td>${c.views.toLocaleString()}</td>
+        <td>${formatDate(c.published_at)}</td>
+      </tr>`;
+  });
+
+  document.querySelectorAll('.sort-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.sort === currentSort);
+  });
+}
+
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentSort = btn.dataset.sort;
+    renderTable();
+  });
+});
+
 async function load() {
   const res = await fetch('/api/metrics');
   const data = await res.json();
@@ -54,18 +122,10 @@ async function load() {
       </div>`;
   });
 
-  const tbody = document.getElementById('table-body');
-  data.content.forEach(c => {
-    tbody.innerHTML += `
-      <tr>
-        <td>${c.platform}</td>
-        <td><a href="${c.url}" target="_blank">${c.title || c.url}</a></td>
-        <td>${c.likes.toLocaleString()}</td>
-        <td>${c.comments.toLocaleString()}</td>
-        <td>${c.views.toLocaleString()}</td>
-      </tr>`;
-  });
+  contentData = data.content;
+  document.getElementById('controls').style.display = 'flex';
   document.getElementById('table').style.display = 'table';
+  renderTable();
 }
 load();
 </script>
