@@ -26,6 +26,7 @@ kodda hazır duruyor, sadece INSTAGRAM_APP_ID/SECRET boş olduğu için
 """
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -129,6 +130,19 @@ def fetch_connected_ig_accounts(access_token: str) -> list[dict]:
     return [{"page_name": profile.get("username"), "ig_account_id": profile.get("user_id")}]
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    """Instagram 'timestamp' alanı '2024-05-01T12:00:00+0000' formatında gelir.
+    Veritabanı modeli gerçek bir Python datetime nesnesi bekliyor — YouTube
+    connector'ında yaşadığımız aynı hataya (SQLite DateTime hatası, 500 dönmesi)
+    burada düşmemek için aynı koruma."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def sync_account(ig_account_id: str, access_token: str, limit: int = 25) -> list[dict]:
     """Bir Instagram Business hesabının son gönderilerinin normalize edilmiş
     istatistiklerini döndürür. Çıktı formatı youtube.sync_channel ile aynı,
@@ -152,7 +166,7 @@ def sync_account(ig_account_id: str, access_token: str, limit: int = 25) -> list
                 "likes": int(item.get("like_count", 0)),
                 "comments": int(item.get("comments_count", 0)),
                 "views": 0,  # Not: view count sadece video/reels için ayrı bir alanda gelir (TODO)
-                "published_at": item.get("timestamp"),
+                "published_at": _parse_datetime(item.get("timestamp")),
             }
         )
     return results
