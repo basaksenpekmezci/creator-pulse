@@ -37,6 +37,7 @@ GRAPH_API_BASE = "https://graph.instagram.com/v21.0"
 OAUTH_AUTHORIZE_URL = "https://api.instagram.com/oauth/authorize"
 OAUTH_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 LONG_LIVED_TOKEN_URL = "https://graph.instagram.com/access_token"
+REFRESH_TOKEN_URL = "https://graph.instagram.com/refresh_access_token"
 
 # "Instagram API with Instagram Login" için gerekli izinler.
 # instagram_business_basic: profil + medya listesi
@@ -101,7 +102,7 @@ def exchange_code_for_token(code: str) -> dict:
 def exchange_for_long_lived_token(short_lived_token: str) -> dict:
     """Kısa ömürlü token'ı 60 gün geçerli uzun ömürlü token'a çevirir.
     Bu token'ın süresi dolmadan (örn. her 50 günde bir) yenilenmesi gerekir
-    — TODO: scheduler.py içine otomatik yenileme job'ı eklenecek."""
+    — bkz. refresh_long_lived_token, scheduler.py bunu otomatik çağırıyor."""
     _, app_secret = _require_credentials()
     params = {
         "grant_type": "ig_exchange_token",
@@ -110,6 +111,23 @@ def exchange_for_long_lived_token(short_lived_token: str) -> dict:
     }
     with httpx.Client(timeout=15) as client:
         resp = client.get(LONG_LIVED_TOKEN_URL, params=params)
+    resp.raise_for_status()
+    return resp.json()  # {"access_token": "...", "token_type": "bearer", "expires_in": 5184000}
+
+
+def refresh_long_lived_token(access_token: str) -> dict:
+    """60 günlük uzun ömürlü token'ı süresi dolmadan yeniler ve süresini
+    tekrar 60 güne uzatır. Instagram kuralı: token en az 24 saatlik olmalı
+    ve süresi henüz dolmamış olmalı — süresi dolmuş bir token yenilenemez,
+    o zaman kullanıcının /connect/instagram ile yeniden bağlanması gerekir.
+    Not: Bu fonksiyon app_secret istemiyor (kısa ömürlü token değişiminden
+    farklı olarak), sadece mevcut access_token'ın kendisi yeterli."""
+    params = {
+        "grant_type": "ig_refresh_token",
+        "access_token": access_token,
+    }
+    with httpx.Client(timeout=15) as client:
+        resp = client.get(REFRESH_TOKEN_URL, params=params)
     resp.raise_for_status()
     return resp.json()  # {"access_token": "...", "token_type": "bearer", "expires_in": 5184000}
 
