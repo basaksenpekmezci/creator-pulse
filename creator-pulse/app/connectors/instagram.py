@@ -161,6 +161,30 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def _fetch_view_count(media_id: str, access_token: str, client: httpx.Client) -> int:
+    """Bir gönderinin izlenme sayısını ayrı bir 'insights' çağrısıyla çeker
+    (medya listesi çağrısı bunu içermiyor). 'views' metriği 2024'te Meta'nın
+    eski 'plays'/'impressions' metriklerinin yerine geçti ve artık sadece
+    video/Reels değil, fotoğraf ve karusel gönderilerde de gösteriliyor
+    (Instagram uygulamasındaki göz ikonu ile aynı sayı — bunu Başak'ın kendi
+    hesabındaki bir karusel gönderide görmesiyle teyit ettik). Bu yüzden tüm
+    gönderi tipleri için çağırıyoruz; bir tip desteklemiyorsa API hata
+    döndürür ve biz sessizce 0'a düşeriz — tek bir gönderideki sorun
+    senkronizasyonun tamamını durdurmaz."""
+    try:
+        resp = client.get(
+            f"{GRAPH_API_BASE}/{media_id}/insights",
+            params={"access_token": access_token, "metric": "views"},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        if data and data[0].get("values"):
+            return int(data[0]["values"][0].get("value", 0))
+    except httpx.HTTPError:
+        pass
+    return 0
+
+
 def sync_account(ig_account_id: str, access_token: str, limit: int = 25) -> list[dict]:
     """Bir Instagram Business hesabının son gönderilerinin normalize edilmiş
     istatistiklerini döndürür. Çıktı formatı youtube.sync_channel ile aynı,
@@ -172,19 +196,20 @@ def sync_account(ig_account_id: str, access_token: str, limit: int = 25) -> list
     }
     with httpx.Client(timeout=15) as client:
         resp = client.get(f"{GRAPH_API_BASE}/{ig_account_id}/media", params=params)
-    resp.raise_for_status()
+        resp.raise_for_status()
 
-    results = []
-    for item in resp.json().get("data", []):
-        results.append(
-            {
-                "content_id": item["id"],
-                "title": (item.get("caption") or "")[:200],
-                "url": item.get("permalink", ""),
-                "likes": int(item.get("like_count", 0)),
-                "comments": int(item.get("comments_count", 0)),
-                "views": 0,  # Not: view count sadece video/reels için ayrı bir alanda gelir (TODO)
-                "published_at": _parse_datetime(item.get("timestamp")),
-            }
-        )
+        results = []
+        for item in resp.json().get("data", []):
+            views = _fetch_view_count(item["id"], access_token, client)
+            results.append(
+                {
+                    "content_id": item["id"],
+                    "title": (item.get("caption") or "")[:200],
+                    "url": item.get("permalink", ""),
+                    "likes": int(item.get("like_count", 0)),
+                    "comments": int(item.get("comments_count", 0)),
+                    "views": views,
+                    "published_at": _parse_datetime(item.get("timestamp")),
+                }
+            )
     return results
