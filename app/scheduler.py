@@ -26,6 +26,14 @@ REFRESH_WINDOW = timedelta(days=10)
 logger = logging.getLogger("creator_pulse.scheduler")
 
 
+def _as_utc(value: datetime) -> datetime:
+    """SQLite DateTime(timezone=True) kolonlarını saat dilimi bilgisi olmadan
+    (naive) geri döndürüyor; aware bir datetime ile karşılaştırınca TypeError
+    fırlıyor ve job'ın tamamı çöküyordu. Kaydederken UTC yazdığımız için
+    naive değerleri UTC kabul ediyoruz."""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 def sync_all_youtube_accounts() -> None:
     db = SessionLocal()
     try:
@@ -52,7 +60,7 @@ def sync_all_instagram_accounts() -> None:
         for account in accounts:
             if not account.access_token_encrypted:
                 continue
-            if account.token_expires_at and account.token_expires_at < datetime.now(timezone.utc):
+            if account.token_expires_at and _as_utc(account.token_expires_at) < datetime.now(timezone.utc):
                 logger.warning(
                     "Instagram token süresi dolmuş, yeniden bağlanman gerekiyor: %s", account.display_name
                 )
@@ -81,7 +89,7 @@ def refresh_instagram_tokens() -> None:
         for account in accounts:
             if not account.access_token_encrypted or not account.token_expires_at:
                 continue
-            if account.token_expires_at - now > REFRESH_WINDOW:
+            if _as_utc(account.token_expires_at) - now > REFRESH_WINDOW:
                 continue  # henüz yenileme zamanı gelmedi
             try:
                 access_token = decrypt(account.access_token_encrypted)
