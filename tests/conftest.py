@@ -11,8 +11,21 @@ from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401 - tabloların Base.metadata'ya kaydolması için
 from app import scheduler
+from app.config import get_settings
 from app.database import Base, get_db
 from app.routers import connect
+
+# Testler için sabit bir Fernet anahtarı. ENCRYPTION_KEY zorunlu olduğunda da
+# token şifreleme testleri gerçek .env'e ihtiyaç duymadan çalışabilsin.
+TEST_ENCRYPTION_KEY = "dGVzdC1hbmFodGFyaS0zMi1iYXl0LXV6dW5sdWd1bmQ="
+
+
+@pytest.fixture(autouse=True)
+def encryption_key(monkeypatch):
+    monkeypatch.setenv("ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
+    get_settings.cache_clear()
+    yield TEST_ENCRYPTION_KEY
+    get_settings.cache_clear()
 
 
 @pytest.fixture
