@@ -16,6 +16,13 @@ pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
+Ardından `.env` içindeki `ENCRYPTION_KEY` alanına kalıcı bir anahtar yaz
+(Instagram token'larını şifrelemek için gerekli, bir kez üret ve değiştirme):
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
 `.env` dosyasını doldurmadan da sunucu çalışır (YouTube/Instagram
 çağrıları anlamlı bir hata mesajıyla reddedilir), ama gerçek veri çekmek
 için aşağıdaki adımları tamamlaman gerekiyor.
@@ -77,7 +84,11 @@ adım tamam.
    izinlerini onaylatman gerekiyor (genelde 2-4 hafta) — ama kendi hesabınla
    test etmek için bunu beklemene gerek yok, Tester olarak eklemen yeterli.
 7. Kurulum bitince tarayıcıdan `http://localhost:8000/connect/instagram`
-   adresine git — Instagram'ın izin ekranına yönlendirileceksin.
+   adresine git — Instagram'ın izin ekranına yönlendirileceksin. İzin
+   verdikten sonra token şifrelenip veritabanına kaydedilir ve ilk
+   senkronizasyon hemen yapılır. Sonrasında scheduler 12 saatte bir
+   otomatik çeker, token'ı da süresi dolmadan yeniler. Elle tetiklemek
+   için: `curl -X POST http://localhost:8000/sync/instagram`
 
 Not: Meta bu API'yi zaman zaman günceller, kurulum sırasında ekran
 metinleri/menü isimleri bu talimattan biraz farklı görünebilir — genel akış
@@ -97,7 +108,7 @@ app/
 ├── scheduler.py         # Periyodik senkronizasyon (APScheduler)
 ├── connectors/
 │   ├── youtube.py       # Çalışıyor — sadece API key gerekiyor
-│   └── instagram.py     # OAuth iskeleti hazır, Meta onayı bekliyor
+│   └── instagram.py     # OAuth + token yenileme hazır
 └── routers/
     ├── sync.py          # Manuel senkronizasyon endpoint'leri
     ├── connect.py        # Instagram OAuth authorize/callback
@@ -110,11 +121,6 @@ tests/                    # pytest testleri
 
 - Instagram App Review başvurusunu şimdiden başlat (başkalarına açmak
   istediğinde gerekecek; kendi hesabınla test etmek için Tester eklemek yeterli).
-- `/connect/instagram/callback` içindeki TODO: alınan (artık uzun ömürlü)
-  access_token'ı `security.encrypt` ile şifreleyip `PlatformAccount`
-  tablosuna kaydet — şu an sadece ekrana basılıyor, DB'ye yazılmıyor.
-- Uzun ömürlü Instagram token'ı 60 günde bir otomatik yenileme job'ı
-  (scheduler.py'ye eklenecek, `exchange_for_long_lived_token` zaten hazır).
 - Basit bir login/auth eklenene kadar tüm veri `crud.DEFAULT_USER_EMAIL`
   altında tutuluyor — çoklu kullanıcıya geçişte bu noktayı değiştir.
 - Dashboard'a zaman içindeki trend grafiği (Chart.js) eklenmesi.
