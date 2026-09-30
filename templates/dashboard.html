@@ -4,6 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Creator Pulse</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   body { font-family: -apple-system, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 32px; }
   h1 { font-size: 1.5rem; }
@@ -23,12 +24,29 @@
   th { color: #9aa3af; font-weight: 500; }
   a { color: #7c9eff; text-decoration: none; }
   .empty { color: #9aa3af; margin-top: 40px; }
+  .trend { background: #161a21; border: 1px solid #262b35; border-radius: 12px; padding: 18px 22px; margin: 8px 0 24px; }
+  .trend h2 { font-size: 1rem; margin: 0 0 12px; font-weight: 500; }
+  .trend .chart-box { position: relative; height: 280px; margin-top: 12px; }
+  .trend .hint { color: #9aa3af; font-size: 0.85rem; margin-top: 8px; }
   code { background: #1d222b; padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
   <h1>Creator Pulse — Özet</h1>
   <div class="cards" id="cards"></div>
+
+  <div class="trend" id="trend" style="display:none">
+    <h2>Zaman içindeki trend</h2>
+    <div class="controls">
+      <button class="sort-btn trend-btn" data-metric="views">İzlenme</button>
+      <button class="sort-btn trend-btn" data-metric="likes">Beğeni</button>
+      <button class="sort-btn trend-btn" data-metric="comments">Yorum</button>
+    </div>
+    <div class="chart-box"><canvas id="trend-chart"></canvas></div>
+    <div class="hint" id="trend-hint" style="display:none">
+      Trend için en az iki farklı günde senkronizasyon gerekiyor.
+    </div>
+  </div>
 
   <div class="controls" id="controls" style="display:none">
     <button class="sort-btn" data-sort="views">İzlenmeye göre</button>
@@ -89,17 +107,102 @@ function renderTable() {
       </tr>`;
   });
 
-  document.querySelectorAll('.sort-btn').forEach(btn => {
+  document.querySelectorAll('#controls .sort-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.sort === currentSort);
   });
 }
 
-document.querySelectorAll('.sort-btn').forEach(btn => {
+document.querySelectorAll('#controls .sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     currentSort = btn.dataset.sort;
     renderTable();
   });
 });
+
+let trendData = null;
+let trendMetric = 'views';
+let trendChart = null;
+
+const PLATFORM_COLORS = {
+  youtube: '#ff6b6b',
+  instagram: '#e879f9',
+  tiktok: '#5eead4',
+  x: '#cbd5e1',
+};
+
+function renderTrend() {
+  if (!trendData || typeof Chart === 'undefined') return;
+
+  const datasets = [{
+    label: 'Toplam',
+    data: trendData.total.map(p => p[trendMetric]),
+    borderColor: '#7c9eff',
+    backgroundColor: '#7c9eff',
+    borderWidth: 2.5,
+    tension: 0.25,
+  }];
+  Object.entries(trendData.by_platform).forEach(([platform, series]) => {
+    datasets.push({
+      label: platform,
+      data: series.map(p => p[trendMetric]),
+      borderColor: PLATFORM_COLORS[platform] || '#9aa3af',
+      backgroundColor: PLATFORM_COLORS[platform] || '#9aa3af',
+      borderWidth: 1.5,
+      tension: 0.25,
+    });
+  });
+
+  const labels = trendData.dates.map(d => formatDate(d));
+  if (trendChart) {
+    trendChart.data.labels = labels;
+    trendChart.data.datasets = datasets;
+    trendChart.update();
+  } else {
+    trendChart = new Chart(document.getElementById('trend-chart'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#e6e8eb' } },
+          tooltip: {
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString('tr-TR')}` },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#9aa3af' }, grid: { color: '#262b35' } },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#9aa3af', callback: v => v.toLocaleString('tr-TR') },
+            grid: { color: '#262b35' },
+          },
+        },
+      },
+    });
+  }
+
+  document.querySelectorAll('.trend-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.metric === trendMetric);
+  });
+}
+
+document.querySelectorAll('.trend-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    trendMetric = btn.dataset.metric;
+    renderTrend();
+  });
+});
+
+async function loadTrend() {
+  const res = await fetch('/api/metrics/trend');
+  trendData = await res.json();
+  if (trendData.dates.length === 0) return;
+  document.getElementById('trend').style.display = 'block';
+  document.getElementById('trend-hint').style.display = trendData.dates.length < 2 ? 'block' : 'none';
+  renderTrend();
+}
 
 async function load() {
   const res = await fetch('/api/metrics');
@@ -126,6 +229,7 @@ async function load() {
   document.getElementById('controls').style.display = 'flex';
   document.getElementById('table').style.display = 'table';
   renderTable();
+  loadTrend();
 }
 load();
 </script>
