@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.connectors import instagram
 from app.database import get_db
-from app.security import encrypt
+from app.security import EncryptionKeyError, encrypt, require_encryption_key
 
 router = APIRouter(prefix="/connect", tags=["connect"])
 
@@ -27,6 +27,13 @@ _pending_states: set[str] = set()
 
 @router.get("/instagram")
 def connect_instagram():
+    # Token callback'te şifrelenip kaydedilecek; anahtar yoksa kullanıcıyı
+    # Instagram'a hiç göndermeden şimdi durduralım.
+    try:
+        require_encryption_key()
+    except EncryptionKeyError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     state = secrets.token_urlsafe(16)
     _pending_states.add(state)
     try:
