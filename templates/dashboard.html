@@ -33,6 +33,13 @@
 </head>
 <body>
   <h1>Creator Pulse — Özet</h1>
+  <div class="controls" id="range-controls" style="display:none">
+    <button class="sort-btn range-btn" data-range="1m">Son 1 ay</button>
+    <button class="sort-btn range-btn" data-range="2m">Son 2 ay</button>
+    <button class="sort-btn range-btn" data-range="3m">Son 3 ay</button>
+    <button class="sort-btn range-btn" data-range="6m">Son 6 ay</button>
+    <button class="sort-btn range-btn" data-range="all">Tümü</button>
+  </div>
   <div class="cards" id="cards"></div>
 
   <div class="trend" id="trend" style="display:none">
@@ -62,6 +69,9 @@
     </thead>
     <tbody id="table-body"></tbody>
   </table>
+  <div class="empty" id="range-empty" style="display:none">
+    Seçilen tarih aralığında yayınlanmış içerik yok.
+  </div>
   <div class="empty" id="empty" style="display:none">
     Henüz veri yok. Bir kanal senkronize etmek için örnek:
     <br><code>curl -X POST "http://localhost:8000/sync/youtube?handle=MKBHD"</code>
@@ -70,6 +80,7 @@
 <script>
 let contentData = [];
 let currentSort = 'views';
+let currentRange = 'all';
 
 const SORTERS = {
   views:    (a, b) => b.views - a.views,
@@ -204,19 +215,10 @@ async function loadTrend() {
   renderTrend();
 }
 
-async function load() {
-  const res = await fetch('/api/metrics');
-  const data = await res.json();
-
+function renderCards(summary) {
   const cardsEl = document.getElementById('cards');
-  const platforms = Object.keys(data.summary_by_platform);
-  if (platforms.length === 0) {
-    document.getElementById('empty').style.display = 'block';
-    return;
-  }
-
-  platforms.forEach(p => {
-    const s = data.summary_by_platform[p];
+  cardsEl.innerHTML = '';
+  Object.entries(summary).forEach(([p, s]) => {
     cardsEl.innerHTML += `
       <div class="card">
         <div class="label">${p}</div>
@@ -224,12 +226,39 @@ async function load() {
         <div class="label" style="margin-top:8px">${s.likes.toLocaleString()} beğeni · ${s.comments.toLocaleString()} yorum · ${s.content_count} içerik</div>
       </div>`;
   });
+}
 
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentRange = btn.dataset.range;
+    load();
+  });
+});
+
+async function load() {
+  const res = await fetch(`/api/metrics?range=${currentRange}`);
+  const data = await res.json();
+
+  const platforms = Object.keys(data.summary_by_platform);
+  if (platforms.length === 0) {
+    document.getElementById('empty').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('range-controls').style.display = 'flex';
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.range === currentRange);
+  });
+  renderCards(data.summary_by_platform);
+
+  // Sıralama seçimi korunur; seçilen aralıktaki içerikler aynı düzenle listelenir.
   contentData = data.content;
-  document.getElementById('controls').style.display = 'flex';
-  document.getElementById('table').style.display = 'table';
+  const hasContent = contentData.length > 0;
+  document.getElementById('range-empty').style.display = hasContent ? 'none' : 'block';
+  document.getElementById('controls').style.display = hasContent ? 'flex' : 'none';
+  document.getElementById('table').style.display = hasContent ? 'table' : 'none';
   renderTable();
-  loadTrend();
+  if (!trendData) loadTrend();
 }
 load();
 </script>

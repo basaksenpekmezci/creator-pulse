@@ -5,10 +5,12 @@ JS ile çağırıp tabloyu/kartları dolduruyor.
 """
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,42 @@ from app.database import get_db
 from app.models import ContentMetric, PlatformAccount
 
 router = APIRouter(tags=["dashboard"])
+
+# Dashboard'daki tarih aralığı filtresinin seçenekleri: anahtar -> kaç ay geriye.
+# "all" filtre uygulamaz.
+DATE_RANGES = {"1m": 1, "2m": 2, "3m": 3, "6m": 6, "all": None}
+DateRange = Literal["1m", "2m", "3m", "6m", "all"]
+
+
+def subtract_months(moment: datetime, months: int) -> datetime:
+    """Takvim ayı olarak geri gider. Hedef ayda o gün yoksa (ör. 31 Mart'tan
+    1 ay geri) ayın son gününe yaslanır."""
+    month_index = moment.year * 12 + (moment.month - 1) - months
+    year, month = divmod(month_index, 12)
+    month += 1
+    day = min(moment.day, calendar.monthrange(year, month)[1])
+    return moment.replace(year=year, month=month, day=day)
+
+
+def range_start(date_range: str, now: datetime | None = None) -> datetime | None:
+    """Seçilen aralığın başlangıç anını döndürür; "all" için None."""
+    months = DATE_RANGES[date_range]
+    if months is None:
+        return None
+    return subtract_months(now or datetime.now(timezone.utc), months)
+
+
+def in_range(published_at: datetime | None, start: datetime | None) -> bool:
+    """İçerik seçilen aralıkta yayınlanmış mı? Yayın tarihi bilinmeyen içerik
+    sadece "tümü" seçiliyken gösterilir, çünkü hangi aralığa düştüğü belli değil."""
+    if start is None:
+        return True
+    if published_at is None:
+        return False
+    # SQLite saat dilimini saklamıyor; naive değerler UTC kabul edilir.
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=timezone.utc)
+    return published_at >= start
 
 
 def build_trend(rows: list[tuple[str, int, ContentMetric]]) -> dict:
@@ -81,8 +119,12 @@ def get_metrics_trend(db: Session = Depends(get_db)):
 
 
 @router.get("/api/metrics")
-def get_metrics(db: Session = Depends(get_db)):
+def get_metrics(
+    date_range: DateRange = Query("all", alias="range"),
+    db: Session = Depends(get_db),
+):
     user = crud.get_or_create_default_user(db)
+    start = range_start(date_range)
 
     # Her (account, content_id) çifti için en son çekilen satırı al —
     # aynı içerik zamanla birden çok kez senkronize edilmiş olabilir.
@@ -104,7 +146,14 @@ def get_metrics(db: Session = Depends(get_db)):
             if row.content_id not in latest_per_content:
                 latest_per_content[row.content_id] = row
 
+        # Verisi olan platformun kartı, seçilen aralıkta içerik olmasa da
+        # 0 değerleriyle görünmeye devam etsin.
+        if latest_per_content:
+            summary[account.platform]
+
         for metric in latest_per_content.values():
+            if not in_range(metric.published_at, start):
+                continue
             summary[account.platform]["likes"] += metric.likes
             summary[account.platform]["comments"] += metric.comments
             summary[account.platform]["views"] += metric.views
