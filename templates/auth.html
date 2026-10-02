@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Creator Pulse — {{ "Kayıt ol" if mode == "register" else "Giriş yap" }}</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 32px; }
+  h1 { font-size: 1.5rem; }
+  .panel { background: #161a21; border: 1px solid #262b35; border-radius: 12px; padding: 24px; max-width: 360px; margin: 48px auto 0; }
+  .panel h1 { margin-top: 0; }
+  label { display: block; color: #9aa3af; font-size: 0.85rem; margin: 14px 0 6px; }
+  input {
+    width: 100%; box-sizing: border-box; background: #0f1115; border: 1px solid #262b35; color: #e6e8eb;
+    padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; font-family: inherit;
+  }
+  input:focus-visible { outline: none; border-color: #4a5fa5; }
+  .primary-btn {
+    width: 100%; margin-top: 20px; background-color: #2d3a63; border: 1px solid #4a5fa5; color: #e6e8eb;
+    padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; cursor: pointer;
+  }
+  .primary-btn:hover { background-color: #34447a; }
+  .error { background: #2a1618; border: 1px solid #5c2a30; color: #f2b8bd; padding: 10px 12px; border-radius: 8px; font-size: 0.9rem; margin-top: 12px; }
+  .hint { color: #9aa3af; font-size: 0.8rem; margin-top: 6px; }
+  .switch { color: #9aa3af; font-size: 0.9rem; margin-top: 18px; text-align: center; }
+  a { color: #7c9eff; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    {% if mode == "register" %}
+    <h1>Kayıt ol</h1>
+    {% else %}
+    <h1>Giriş yap</h1>
+    {% endif %}
+    {% if error %}<div class="error" id="form-error" role="alert">{{ error }}</div>{% endif %}
+
+    <form method="post" action="/{{ mode }}" id="auth-form">
+      <label for="email">E-posta</label>
+      <input type="email" id="email" name="email" value="{{ email }}" autocomplete="email" required autofocus>
+
+      <label for="password">Şifre</label>
+      <input type="password" id="password" name="password" required
+             autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}"
+             {% if mode == "register" %}minlength="{{ min_password_length }}"{% endif %}>
+      {% if mode == "register" %}
+      <div class="hint">En az {{ min_password_length }} karakter.</div>
+
+      <label for="password_confirm">Şifre (tekrar)</label>
+      <input type="password" id="password_confirm" name="password_confirm" required
+             autocomplete="new-password" minlength="{{ min_password_length }}">
+      {% endif %}
+
+      <button type="submit" class="primary-btn">{{ "Kayıt ol" if mode == "register" else "Giriş yap" }}</button>
+    </form>
+
+    {% if mode == "register" %}
+    <div class="switch">Hesabın var mı? <a href="/login">Giriş yap</a></div>
+    {% else %}
+    <div class="switch">Hesabın yok mu? <a href="/register">Kayıt ol</a></div>
+    {% endif %}
+  </div>
+</body>
+</html>

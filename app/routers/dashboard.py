@@ -1,6 +1,6 @@
 """
-Toplu istatistik endpoint'i. Platforma göre gruplanmış özet + en son
-çekilen içerik listesini döndürür. templates/dashboard.html bu endpoint'i
+Toplu istatistik endpoint'i. Giriş yapan kullanıcının hesaplarına göre
+platforma göre gruplanmış özet + en son çekilen içerik listesini döndürür. templates/dashboard.html bu endpoint'i
 JS ile çağırıp tabloyu/kartları dolduruyor.
 """
 from __future__ import annotations
@@ -14,9 +14,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import crud
+from app.auth import get_current_user
 from app.database import get_db
-from app.models import ContentMetric, PlatformAccount
+from app.models import ContentMetric, PlatformAccount, User
 
 router = APIRouter(tags=["dashboard"])
 
@@ -60,9 +60,9 @@ def in_range(published_at: datetime | None, start: datetime | None) -> bool:
 @router.get("/api/metrics")
 def get_metrics(
     date_range: DateRange = Query("all", alias="range"),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user = crud.get_or_create_default_user(db)
     start = range_start(date_range)
 
     # Her (account, content_id) çifti için en son çekilen satırı al —
@@ -115,4 +115,35 @@ def get_metrics(
     return {
         "summary_by_platform": summary,
         "content": latest_content[:50],
+    }
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+@router.get("/api/me")
+def get_me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Dashboard başlığı ve bağlı hesaplar listesi için: kim giriş yaptı,
+    hangi hesapları bağlı ve her birinin senkronizasyon durumu ne."""
+    accounts = db.scalars(
+        select(PlatformAccount).where(PlatformAccount.user_id == user.id).order_by(PlatformAccount.id)
+    ).all()
+    return {
+        "email": user.email,
+        "accounts": [
+            {
+                "id": account.id,
+                "platform": account.platform,
+                "name": account.display_name or account.external_account_id,
+                "sync_status": account.sync_status,
+                "last_synced_at": _iso(account.last_synced_at),
+                "last_sync_error": account.last_sync_error,
+            }
+            for account in accounts
+        ],
     }

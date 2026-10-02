@@ -33,9 +33,40 @@ için aşağıdaki adımları tamamlaman gerekiyor.
 uvicorn app.main:app --reload
 ```
 
-- Dashboard: http://localhost:8000/
+- Dashboard: http://localhost:8000/ (giriş yapmadıysan /login'e yönlendirir)
 - API dokümantasyonu (otomatik): http://localhost:8000/docs
 - Health check: http://localhost:8000/health
+
+## Kullanıcı Hesapları
+
+İlk açılışta http://localhost:8000/register adresinden e-posta ve şifreyle
+kayıt ol. Şifreler bcrypt ile hash'lenerek saklanır; oturum imzalı,
+HttpOnly ve SameSite=Lax bir çerezde 14 gün tutulur. Her kullanıcı sadece
+kendi bağladığı hesapları ve onların verisini görür.
+
+- **Eski veriler:** Kullanıcı sisteminden önce tüm veriler tek bir ortak
+  kullanıcıda (`me@creator-pulse.local`) duruyordu. Bu veriler, varsayılan
+  olarak **ilk kayıt olan kullanıcıya** taşınır. Belirli bir e-postaya
+  gitmesini istersen `.env`'e `LEGACY_DATA_OWNER_EMAIL=senin@epostan.com`
+  yaz; o zaman sadece o e-postayla kayıt olan kullanıcı alır.
+- **Veritabanı:** Sunucu açılırken var olan `creator_pulse.db`'ye eksik
+  kolonları (`users.password_hash`, `platform_accounts.sync_status`,
+  `last_synced_at`, `last_sync_error`) kendisi ekler; elle bir şey yapman
+  ya da veritabanını silmen gerekmez.
+- **Yayında (HTTPS):** `.env`'de `APP_SECRET_KEY`'i rastgele, uzun bir
+  değerle değiştir ve `SESSION_COOKIE_SECURE=true` yap.
+
+## Hesap Bağlama ve Otomatik Güncelleme
+
+Dashboard'daki **YouTube bağla** butonuna kanal adını (`@kanalin`) yazıp
+"Bağla" de; **Instagram bağla** seni Instagram'ın izin ekranına götürür.
+Her iki durumda da ilk senkronizasyon arka planda başlar, dashboard
+ilerlemeyi gösterir ve bitince veriler kendiliğinden görünür.
+
+Bağlı her hesap sonra **günde bir** otomatik güncellenir: zamanlayıcı
+saatte bir bakar ve son güncellemesi 24 saatten eski hesapları çeker.
+Sunucu açıldığında da hemen bir kontrol yapılır; böylece sunucu yeniden
+başlasa bile hiçbir hesap bir günden eski kalmaz.
 
 ## Testler
 
@@ -49,11 +80,8 @@ pytest
 2. "APIs & Services → Library" içinden **YouTube Data API v3**'ü etkinleştir.
 3. "APIs & Services → Credentials → Create Credentials → API key" ile bir anahtar üret.
 4. Anahtarı `.env` dosyasında `YOUTUBE_API_KEY` alanına yapıştır.
-5. Test et:
-   ```bash
-   curl -X POST "http://localhost:8000/sync/youtube?handle=SENIN_KANAL_ADIN"
-   curl http://localhost:8000/api/metrics
-   ```
+5. Sunucuyu başlat, giriş yap ve dashboard'daki **YouTube bağla** ile
+   kanal adını gir.
 
 Not: Günlük kota varsayılan olarak 10.000 unit — bu uygulamanın kullandığı
 her senkronizasyon ~3 unit civarında harcıyor (playlistItems + videos.list),
@@ -83,12 +111,11 @@ adım tamam.
    `instagram_business_basic` ve `instagram_business_manage_insights`
    izinlerini onaylatman gerekiyor (genelde 2-4 hafta) — ama kendi hesabınla
    test etmek için bunu beklemene gerek yok, Tester olarak eklemen yeterli.
-7. Kurulum bitince tarayıcıdan `http://localhost:8000/connect/instagram`
-   adresine git — Instagram'ın izin ekranına yönlendirileceksin. İzin
-   verdikten sonra token şifrelenip veritabanına kaydedilir ve ilk
-   senkronizasyon hemen yapılır. Sonrasında scheduler 12 saatte bir
-   otomatik çeker, token'ı da süresi dolmadan yeniler. Elle tetiklemek
-   için: `curl -X POST http://localhost:8000/sync/instagram`
+7. Kurulum bitince giriş yap ve dashboard'daki **Instagram bağla**
+   butonuna bas — Instagram'ın izin ekranına yönlendirileceksin. İzin
+   verdikten sonra token şifrelenip senin hesabına kaydedilir, dashboard'a
+   dönersin ve ilk senkronizasyon arka planda yapılır. Sonrasında
+   zamanlayıcı günde bir otomatik çeker, token'ı da süresi dolmadan yeniler.
 
 Not: Meta bu API'yi zaman zaman günceller, kurulum sırasında ekran
 metinleri/menü isimleri bu talimattan biraz farklı görünebilir — genel akış
@@ -99,21 +126,24 @@ kalıyor.
 
 ```
 app/
-├── main.py            # FastAPI giriş noktası + scheduler başlatma
+├── main.py            # FastAPI giriş noktası, oturum çerezi, scheduler başlatma
+├── auth.py             # Şifre hash'leme (bcrypt) + giriş yapan kullanıcı
 ├── config.py           # .env ayarları
 ├── database.py         # SQLAlchemy engine/session
 ├── models.py           # User, PlatformAccount, ContentMetric
 ├── crud.py             # DB yardımcı fonksiyonları
 ├── security.py         # Token şifreleme
-├── scheduler.py         # Periyodik senkronizasyon (APScheduler)
+├── scheduler.py         # Günlük senkronizasyon (APScheduler)
 ├── connectors/
 │   ├── youtube.py       # Çalışıyor — sadece API key gerekiyor
 │   └── instagram.py     # OAuth + token yenileme hazır
 └── routers/
+    ├── auth.py          # Kayıt / giriş / çıkış sayfaları
     ├── sync.py          # Manuel senkronizasyon endpoint'leri
-    ├── connect.py        # Instagram OAuth authorize/callback
+    ├── connect.py        # YouTube bağla + Instagram OAuth authorize/callback
     └── dashboard.py       # Toplu istatistik API'si
 templates/dashboard.html  # Basit web arayüzü
+templates/auth.html       # Kayıt ve giriş ekranları
 tests/                    # pytest testleri
 ```
 
@@ -121,8 +151,6 @@ tests/                    # pytest testleri
 
 - Instagram App Review başvurusunu şimdiden başlat (başkalarına açmak
   istediğinde gerekecek; kendi hesabınla test etmek için Tester eklemek yeterli).
-- Basit bir login/auth eklenene kadar tüm veri `crud.DEFAULT_USER_EMAIL`
-  altında tutuluyor — çoklu kullanıcıya geçişte bu noktayı değiştir.
 - Postgres'e geçiş: sadece `.env`'deki `DATABASE_URL`'i değiştirmek yeterli
   olacak şekilde tasarlandı.
 

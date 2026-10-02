@@ -1,32 +1,70 @@
 """
-Instagram OAuth bağlanma akışı (workflow.html'deki sequence diyagramının
-kod karşılığı). Meta uygulama incelemesi tamamlanana kadar bu endpoint'ler
-çalışır ama gerçek bir izin ekranına yönlendirme yapamaz — INSTAGRAM_APP_ID
-.env'de tanımlı olmalı.
+Hesap bağlama uçları. Dashboard'daki "YouTube bağla" ve "Instagram bağla"
+butonları buraya gelir. Hesap giriş yapmış kullanıcıya bağlanır ve ilk
+senkronizasyon arka planda başlar; terminalden komut çalıştırmak gerekmez.
+Sonraki günlük güncellemeleri app/scheduler.py yapar.
+
+Instagram tarafı OAuth akışı (workflow.html'deki sequence diyagramının kod
+karşılığı) — INSTAGRAM_APP_ID/SECRET .env'de tanımlı olmalı.
 """
 from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app import crud
-from app.connectors import instagram
+from app import crud, scheduler
+from app.auth import get_current_user
+from app.connectors import instagram, youtube
 from app.database import get_db
+from app.models import User
 from app.security import EncryptionKeyError, encrypt, require_encryption_key
 
 router = APIRouter(prefix="/connect", tags=["connect"])
 
-# NOT: Bu basit in-memory store sadece tek-worker geliştirme ortamı içindir.
-# Üretimde state'i session/cookie ya da Redis'te tutmak gerekir.
-_pending_states: set[str] = set()
+# OAuth state'i kullanıcının kendi oturum çerezinde tutulur: böylece callback
+# sadece akışı başlatan oturumda kabul edilir ve birden çok worker'da da çalışır.
+OAUTH_STATE_KEY = "instagram_oauth_state"
+
+
+class YouTubeConnectRequest(BaseModel):
+    handle: str
+
+
+@router.post("/youtube", status_code=202)
+def connect_youtube(
+    body: YouTubeConnectRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kanal adını (@handle) ya da kanal id'sini alır. Kanalın var olduğunu
+    hemen doğrular (yanlış ad anında hata olarak dönsün), videoları ise arka
+    planda çeker."""
+    handle = body.handle.strip()
+    if not handle:
+        raise HTTPException(status_code=400, detail="YouTube kanal adını gir.")
+    try:
+        channel_id = youtube.resolve_channel_id(handle)
+    except youtube.YouTubeConnectorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    account = crud.get_or_create_platform_account(
+        db, user, platform="youtube", external_account_id=channel_id, display_name=handle
+    )
+    account.sync_status = "syncing"
+    account.last_sync_error = None
+    db.commit()
+    background_tasks.add_task(scheduler.sync_account, account.id)
+    return {"platform": "youtube", "account_id": account.id, "channel": handle, "status": "syncing"}
 
 
 @router.get("/instagram")
-def connect_instagram():
+def connect_instagram(request: Request, user: User = Depends(get_current_user)):
     # Token callback'te şifrelenip kaydedilecek; anahtar yoksa kullanıcıyı
     # Instagram'a hiç göndermeden şimdi durduralım.
     try:
@@ -35,24 +73,26 @@ def connect_instagram():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     state = secrets.token_urlsafe(16)
-    _pending_states.add(state)
     try:
         url = instagram.build_authorize_url(state)
     except instagram.InstagramConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request.session[OAUTH_STATE_KEY] = state
     return RedirectResponse(url)
 
 
 @router.get("/instagram/callback")
 def instagram_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     code: str | None = None,
     state: str | None = None,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not code or not state or state not in _pending_states:
+    expected_state = request.session.pop(OAUTH_STATE_KEY, None)
+    if not code or not state or not expected_state or not secrets.compare_digest(state, expected_state):
         raise HTTPException(status_code=400, detail="Geçersiz OAuth callback (code/state eksik veya yanlış).")
-    _pending_states.discard(state)
 
     try:
         token_data = instagram.exchange_code_for_token(code)
@@ -72,22 +112,17 @@ def instagram_callback(
         ig_account_id = ig_account["ig_account_id"]
         username = ig_account.get("page_name") or str(ig_account_id)
 
-        # Token'ı şifreleyip veritabanına kalıcı olarak kaydet — artık her
-        # bağlantı kurulduğunda yeniden manuel token kopyalamaya gerek yok,
-        # scheduler.py da bu kayıttan otomatik senkronize edebilecek.
-        user = crud.get_or_create_default_user(db)
+        # Token'ı şifreleyip giriş yapan kullanıcının hesabına kaydet;
+        # scheduler.py da bu kayıttan otomatik senkronize edecek.
         account = crud.get_or_create_platform_account(
             db, user, platform="instagram", external_account_id=str(ig_account_id), display_name=username
         )
         account.access_token_encrypted = encrypt(access_token)
         if expires_in:
             account.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        account.sync_status = "syncing"
+        account.last_sync_error = None
         db.commit()
-
-        # Kullanıcı ayrıca /sync/instagram çağırmak zorunda kalmasın diye
-        # bağlantı kurulur kurulmaz ilk senkronizasyonu da burada yapalım.
-        items = instagram.sync_account(ig_account_id, access_token)
-        saved = crud.upsert_metrics(db, account, items)
     except instagram.InstagramConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
@@ -95,8 +130,6 @@ def instagram_callback(
     except Exception as exc:  # noqa: BLE001 - ham hatayı göstermek anlamsız 500'lerle uğraşmaktan iyi
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
 
-    return {
-        "message": "Instagram bağlantısı başarılı ve kaydedildi",
-        "account": username,
-        "posts_synced": saved,
-    }
+    # İlk senkron arka planda; kullanıcı dashboard'a döner ve ilerlemeyi orada görür.
+    background_tasks.add_task(scheduler.sync_account, account.id)
+    return RedirectResponse("/?baglandi=instagram", status_code=303)

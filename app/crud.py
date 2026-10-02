@@ -1,26 +1,64 @@
 """
-Basit veritabanı yardımcı fonksiyonları. MVP'de tek kullanıcı olduğu için
-`get_or_create_default_user` var — Faz 4'te gerçek login sistemi eklenince
-bu fonksiyonun yerini normal auth alacak, ama tablo yapısı zaten hazır.
+Basit veritabanı yardımcı fonksiyonları: kullanıcı oluşturma, eski ortak
+kullanıcının verisini taşıma, platform hesabı ve metrik kaydı.
 """
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import ContentMetric, PlatformAccount, User
 
-DEFAULT_USER_EMAIL = "me@creator-pulse.local"
+# Kullanıcı sisteminden önce tüm veriler bu tek ortak kullanıcıya yazılıyordu.
+# Artık kimse bu kullanıcıyla giriş yapamaz; sadece verisini gerçek bir
+# kullanıcıya taşımak (claim_legacy_data) için tanınıyor.
+LEGACY_USER_EMAIL = "me@creator-pulse.local"
 
 
-def get_or_create_default_user(db: Session) -> User:
-    user = db.scalar(select(User).where(User.email == DEFAULT_USER_EMAIL))
-    if user is None:
-        user = User(email=DEFAULT_USER_EMAIL)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+def get_user_by_email(db: Session, email: str) -> User | None:
+    return db.scalar(select(User).where(User.email == email))
+
+
+def create_user(db: Session, email: str, password_hash: str) -> User:
+    user = User(email=email, password_hash=password_hash)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user
+
+
+def claim_legacy_data(db: Session, user: User) -> int:
+    """Eski ortak kullanıcının bağlı hesaplarını (ve onlara bağlı tüm
+    metrikleri) verilen kullanıcıya taşır, sonra ortak kullanıcıyı siler.
+
+    Kime taşınacağı LEGACY_DATA_OWNER_EMAIL ayarına bağlı: boşsa ilk kayıt
+    olan kullanıcı (kendisinden başka şifreli kullanıcı yoksa), doluysa sadece
+    o e-postayla kayıt olan kullanıcı alır. Taşınan hesap sayısını döndürür."""
+    legacy = get_user_by_email(db, LEGACY_USER_EMAIL)
+    if legacy is None or legacy.id == user.id:
+        return 0
+
+    owner_email = get_settings().legacy_data_owner_email.strip().lower()
+    if owner_email:
+        if user.email != owner_email:
+            return 0
+    else:
+        other_real_user = db.scalar(
+            select(User.id).where(User.password_hash.is_not(None), User.id != user.id)
+        )
+        if other_real_user is not None:
+            return 0
+
+    accounts = list(legacy.accounts)
+    for account in accounts:
+        account.user_id = user.id
+    db.flush()
+    db.expire(legacy, ["accounts"])
+    db.delete(legacy)
+    db.commit()
+    db.refresh(user)
+    return len(accounts)
 
 
 def get_or_create_platform_account(

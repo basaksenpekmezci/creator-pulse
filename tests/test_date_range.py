@@ -6,11 +6,8 @@ Dashboard'daki tarih aralığı filtresi için testler: ay hesabı yardımcılar
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app import crud
-from app.database import get_db
 from app.models import ContentMetric
 from app.routers import dashboard
 from app.routers.dashboard import in_range, range_start, subtract_months
@@ -50,12 +47,11 @@ def test_in_range():
 
 
 @pytest.fixture
-def api(session_factory, monkeypatch):
+def api(session_factory, client, user, monkeypatch):
     # Filtrenin "şimdi"sini sabitle ki testler takvime bağlı olmasın.
     monkeypatch.setattr(dashboard, "range_start", lambda r, now=None: range_start(r, NOW))
 
     with session_factory() as db:
-        user = crud.get_or_create_default_user(db)
         yt = crud.get_or_create_platform_account(db, user, "youtube", "UC1", "Kanal")
         ig = crud.get_or_create_platform_account(db, user, "instagram", "IG1", "Hesap")
 
@@ -80,15 +76,7 @@ def api(session_factory, monkeypatch):
         add(ig, "ig-300g", 300, likes=7, comments=7, views=70)
         db.commit()
 
-    app = FastAPI()
-    app.include_router(dashboard.router)
-
-    def override_get_db():
-        with session_factory() as db:
-            yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    return TestClient(app)
+    return client
 
 
 def titles(body):
