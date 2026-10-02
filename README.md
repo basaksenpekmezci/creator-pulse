@@ -123,7 +123,6 @@ tests/                    # pytest testleri
   istediğinde gerekecek; kendi hesabınla test etmek için Tester eklemek yeterli).
 - Basit bir login/auth eklenene kadar tüm veri `crud.DEFAULT_USER_EMAIL`
   altında tutuluyor — çoklu kullanıcıya geçişte bu noktayı değiştir.
-- Dashboard'a zaman içindeki trend grafiği (Chart.js) eklenmesi.
 - Postgres'e geçiş: sadece `.env`'deki `DATABASE_URL`'i değiştirmek yeterli
   olacak şekilde tasarlandı.
 

@@ -4,7 +4,6 @@
 <head>
 <meta charset="UTF-8">
 <title>Creator Pulse</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   body { font-family: -apple-system, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 32px; }
   h1 { font-size: 1.5rem; }
@@ -18,50 +17,46 @@
     padding: 8px 14px; border-radius: 8px; font-size: 0.85rem; cursor: pointer;
   }
   .sort-btn:hover { border-color: #3a4150; color: #e6e8eb; }
-  .sort-btn.active { background: #2d3a63; border-color: #4a5fa5; color: #e6e8eb; }
+  .sort-btn.active { background-color: #2d3a63; border-color: #4a5fa5; color: #e6e8eb; }
+  .toolbar { align-items: center; margin-bottom: 8px; }
+  .range-select {
+    appearance: none; -webkit-appearance: none; font-family: inherit;
+    padding-right: 32px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239aa3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  .range-select:focus-visible { outline: none; border-color: #4a5fa5; }
+  .range-select option { background: #161a21; color: #e6e8eb; }
+  .divider { width: 1px; align-self: stretch; background: #262b35; margin: 2px 4px; }
   table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #262b35; font-size: 0.9rem; }
   th { color: #9aa3af; font-weight: 500; }
   a { color: #7c9eff; text-decoration: none; }
   .empty { color: #9aa3af; margin-top: 40px; }
-  .trend { background: #161a21; border: 1px solid #262b35; border-radius: 12px; padding: 18px 22px; margin: 8px 0 24px; }
-  .trend h2 { font-size: 1rem; margin: 0 0 12px; font-weight: 500; }
-  .trend .chart-box { position: relative; height: 280px; margin-top: 12px; }
-  .trend .hint { color: #9aa3af; font-size: 0.85rem; margin-top: 8px; }
   code { background: #1d222b; padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
   <h1>Creator Pulse — Özet</h1>
-  <div class="controls" id="range-controls" style="display:none">
-    <button class="sort-btn range-btn" data-range="1m">Son 1 ay</button>
-    <button class="sort-btn range-btn" data-range="2m">Son 2 ay</button>
-    <button class="sort-btn range-btn" data-range="3m">Son 3 ay</button>
-    <button class="sort-btn range-btn" data-range="6m">Son 6 ay</button>
-    <button class="sort-btn range-btn" data-range="all">Tümü</button>
+  <div class="controls toolbar" id="controls" style="display:none">
+    <select class="sort-btn range-select" id="range-select" aria-label="Tarih aralığı">
+      <option value="1m">Son 1 ay</option>
+      <option value="2m">Son 2 ay</option>
+      <option value="3m">Son 3 ay</option>
+      <option value="6m">Son 6 ay</option>
+      <option value="all">Tümü</option>
+    </select>
+    <!-- Ayraç: soldaki tarih filtresi veriyi daraltır, sağdaki düğmeler sadece sıralar. -->
+    <span class="divider" id="sort-divider" aria-hidden="true"></span>
+    <div class="controls" id="sort-controls" style="margin-top:0">
+      <button class="sort-btn" data-sort="views">İzlenmeye göre</button>
+      <button class="sort-btn" data-sort="likes">Beğeniye göre</button>
+      <button class="sort-btn" data-sort="comments">Yoruma göre</button>
+      <button class="sort-btn" data-sort="total">Toplam etkileşime göre</button>
+      <button class="sort-btn" data-sort="newest">En yeniye göre</button>
+    </div>
   </div>
   <div class="cards" id="cards"></div>
-
-  <div class="trend" id="trend" style="display:none">
-    <h2>Zaman içindeki trend</h2>
-    <div class="controls">
-      <button class="sort-btn trend-btn" data-metric="views">İzlenme</button>
-      <button class="sort-btn trend-btn" data-metric="likes">Beğeni</button>
-      <button class="sort-btn trend-btn" data-metric="comments">Yorum</button>
-    </div>
-    <div class="chart-box"><canvas id="trend-chart"></canvas></div>
-    <div class="hint" id="trend-hint" style="display:none">
-      Trend için en az iki farklı günde senkronizasyon gerekiyor.
-    </div>
-  </div>
-
-  <div class="controls" id="controls" style="display:none">
-    <button class="sort-btn" data-sort="views">İzlenmeye göre</button>
-    <button class="sort-btn" data-sort="likes">Beğeniye göre</button>
-    <button class="sort-btn" data-sort="comments">Yoruma göre</button>
-    <button class="sort-btn" data-sort="total">Toplam etkileşime göre</button>
-    <button class="sort-btn" data-sort="newest">En yeniye göre</button>
-  </div>
 
   <table id="table" style="display:none">
     <thead>
@@ -118,102 +113,17 @@ function renderTable() {
       </tr>`;
   });
 
-  document.querySelectorAll('#controls .sort-btn').forEach(btn => {
+  document.querySelectorAll('#sort-controls .sort-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.sort === currentSort);
   });
 }
 
-document.querySelectorAll('#controls .sort-btn').forEach(btn => {
+document.querySelectorAll('#sort-controls .sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     currentSort = btn.dataset.sort;
     renderTable();
   });
 });
-
-let trendData = null;
-let trendMetric = 'views';
-let trendChart = null;
-
-const PLATFORM_COLORS = {
-  youtube: '#ff6b6b',
-  instagram: '#e879f9',
-  tiktok: '#5eead4',
-  x: '#cbd5e1',
-};
-
-function renderTrend() {
-  if (!trendData || typeof Chart === 'undefined') return;
-
-  const datasets = [{
-    label: 'Toplam',
-    data: trendData.total.map(p => p[trendMetric]),
-    borderColor: '#7c9eff',
-    backgroundColor: '#7c9eff',
-    borderWidth: 2.5,
-    tension: 0.25,
-  }];
-  Object.entries(trendData.by_platform).forEach(([platform, series]) => {
-    datasets.push({
-      label: platform,
-      data: series.map(p => p[trendMetric]),
-      borderColor: PLATFORM_COLORS[platform] || '#9aa3af',
-      backgroundColor: PLATFORM_COLORS[platform] || '#9aa3af',
-      borderWidth: 1.5,
-      tension: 0.25,
-    });
-  });
-
-  const labels = trendData.dates.map(d => formatDate(d));
-  if (trendChart) {
-    trendChart.data.labels = labels;
-    trendChart.data.datasets = datasets;
-    trendChart.update();
-  } else {
-    trendChart = new Chart(document.getElementById('trend-chart'), {
-      type: 'line',
-      data: { labels, datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { labels: { color: '#e6e8eb' } },
-          tooltip: {
-            callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString('tr-TR')}` },
-          },
-        },
-        scales: {
-          x: { ticks: { color: '#9aa3af' }, grid: { color: '#262b35' } },
-          y: {
-            beginAtZero: true,
-            ticks: { color: '#9aa3af', callback: v => v.toLocaleString('tr-TR') },
-            grid: { color: '#262b35' },
-          },
-        },
-      },
-    });
-  }
-
-  document.querySelectorAll('.trend-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.metric === trendMetric);
-  });
-}
-
-document.querySelectorAll('.trend-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    trendMetric = btn.dataset.metric;
-    renderTrend();
-  });
-});
-
-async function loadTrend() {
-  const res = await fetch('/api/metrics/trend');
-  trendData = await res.json();
-  if (trendData.dates.length === 0) return;
-  document.getElementById('trend').style.display = 'block';
-  document.getElementById('trend-hint').style.display = trendData.dates.length < 2 ? 'block' : 'none';
-  renderTrend();
-}
 
 function renderCards(summary) {
   const cardsEl = document.getElementById('cards');
@@ -228,11 +138,11 @@ function renderCards(summary) {
   });
 }
 
-document.querySelectorAll('.range-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentRange = btn.dataset.range;
-    load();
-  });
+const rangeSelect = document.getElementById('range-select');
+rangeSelect.value = currentRange;
+rangeSelect.addEventListener('change', () => {
+  currentRange = rangeSelect.value;
+  load();
 });
 
 async function load() {
@@ -245,20 +155,19 @@ async function load() {
     return;
   }
 
-  document.getElementById('range-controls').style.display = 'flex';
-  document.querySelectorAll('.range-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.range === currentRange);
-  });
+  document.getElementById('controls').style.display = 'flex';
+  // Filtre uygulanıyorsa menü vurgulansın; "Tümü"nde nötr kalır.
+  rangeSelect.classList.toggle('active', currentRange !== 'all');
   renderCards(data.summary_by_platform);
 
   // Sıralama seçimi korunur; seçilen aralıktaki içerikler aynı düzenle listelenir.
   contentData = data.content;
   const hasContent = contentData.length > 0;
   document.getElementById('range-empty').style.display = hasContent ? 'none' : 'block';
-  document.getElementById('controls').style.display = hasContent ? 'flex' : 'none';
+  document.getElementById('sort-divider').style.display = hasContent ? 'block' : 'none';
+  document.getElementById('sort-controls').style.display = hasContent ? 'flex' : 'none';
   document.getElementById('table').style.display = hasContent ? 'table' : 'none';
   renderTable();
-  if (!trendData) loadTrend();
 }
 load();
 </script>
