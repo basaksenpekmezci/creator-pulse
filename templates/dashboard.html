@@ -3,6 +3,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Creator Pulse</title>
 <style>
   body { font-family: -apple-system, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 32px; }
@@ -34,10 +35,55 @@
   a { color: #7c9eff; text-decoration: none; }
   .empty { color: #9aa3af; margin-top: 40px; }
   code { background: #1d222b; padding: 2px 6px; border-radius: 4px; }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .header h1 { margin: 0; }
+  .user-box { display: flex; align-items: center; gap: 12px; color: #9aa3af; font-size: 0.9rem; }
+  .user-box form { margin: 0; }
+  .connect-bar { align-items: center; margin-top: 20px; }
+  .connect-btn { color: #e6e8eb; }
+  .yt-form { display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .yt-form.open { display: flex; }
+  .yt-form input {
+    background: #0f1115; border: 1px solid #262b35; color: #e6e8eb; font-family: inherit;
+    padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; min-width: 220px;
+  }
+  .yt-form input:focus-visible { outline: none; border-color: #4a5fa5; }
+  .accounts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .account-chip {
+    background: #161a21; border: 1px solid #262b35; border-radius: 999px; padding: 6px 12px;
+    font-size: 0.8rem; color: #9aa3af; display: flex; gap: 6px; align-items: center;
+  }
+  .account-chip strong { color: #e6e8eb; font-weight: 500; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a4150; }
+  .status-dot.ok { background: #3fb27f; }
+  .status-dot.syncing { background: #d9a441; }
+  .status-dot.error { background: #e06c75; }
+  .notice { margin-top: 12px; font-size: 0.9rem; padding: 10px 12px; border-radius: 8px; display: none; }
+  .notice.info { display: block; background: #172033; border: 1px solid #2d3a63; color: #c9d4f2; }
+  .notice.error { display: block; background: #2a1618; border: 1px solid #5c2a30; color: #f2b8bd; }
 </style>
 </head>
 <body>
-  <h1>Creator Pulse — Özet</h1>
+  <div class="header">
+    <h1>Creator Pulse — Özet</h1>
+    <div class="user-box">
+      <span id="user-email"></span>
+      <form method="post" action="/logout"><button type="submit" class="sort-btn" id="logout-btn">Çıkış yap</button></form>
+    </div>
+  </div>
+
+  <div class="controls connect-bar" id="connect-bar">
+    <button type="button" class="sort-btn connect-btn" id="youtube-connect-btn">YouTube bağla</button>
+    <a class="sort-btn connect-btn" id="instagram-connect-btn" href="/connect/instagram">Instagram bağla</a>
+    <form class="yt-form" id="youtube-form">
+      <input type="text" id="youtube-handle" name="handle" placeholder="Kanal adı, ör. @kanalim" aria-label="YouTube kanal adı" required>
+      <button type="submit" class="sort-btn active" id="youtube-submit">Bağla</button>
+      <button type="button" class="sort-btn" id="youtube-cancel">Vazgeç</button>
+    </form>
+  </div>
+  <div class="notice" id="notice" role="status"></div>
+  <div class="accounts" id="accounts"></div>
+
   <div class="controls toolbar" id="controls" style="display:none">
     <select class="sort-btn range-select" id="range-select" aria-label="Tarih aralığı">
       <option value="1m">Son 1 ay</option>
@@ -68,8 +114,8 @@
     Seçilen tarih aralığında yayınlanmış içerik yok.
   </div>
   <div class="empty" id="empty" style="display:none">
-    Henüz veri yok. Bir kanal senkronize etmek için örnek:
-    <br><code>curl -X POST "http://localhost:8000/sync/youtube?handle=MKBHD"</code>
+    Henüz veri yok. Yukarıdaki “YouTube bağla” ya da “Instagram bağla” ile bir hesap bağla;
+    veriler arka planda çekilip burada görünecek ve her gün kendiliğinden güncellenecek.
   </div>
 
 <script>
@@ -145,8 +191,18 @@ rangeSelect.addEventListener('change', () => {
   load();
 });
 
+// Oturum düşmüşse (çerezin süresi dolmuş vb.) giriş sayfasına dön.
+async function api(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Giriş gerekli');
+  }
+  return res;
+}
+
 async function load() {
-  const res = await fetch(`/api/metrics?range=${currentRange}`);
+  const res = await api(`/api/metrics?range=${currentRange}`);
   const data = await res.json();
 
   const platforms = Object.keys(data.summary_by_platform);
@@ -155,6 +211,7 @@ async function load() {
     return;
   }
 
+  document.getElementById('empty').style.display = 'none';
   document.getElementById('controls').style.display = 'flex';
   // Filtre uygulanıyorsa menü vurgulansın; "Tümü"nde nötr kalır.
   rangeSelect.classList.toggle('active', currentRange !== 'all');
@@ -169,6 +226,104 @@ async function load() {
   document.getElementById('table').style.display = hasContent ? 'table' : 'none';
   renderTable();
 }
+
+// --- Hesap bağlama ve senkronizasyon durumu --------------------------------
+
+const PLATFORM_NAMES = { youtube: 'YouTube', instagram: 'Instagram' };
+const notice = document.getElementById('notice');
+let pollTimer = null;
+
+function showNotice(text, kind = 'info') {
+  notice.textContent = text;
+  notice.className = `notice ${kind}`;
+}
+
+function formatDateTime(iso) {
+  return new Date(iso).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function accountStatusText(a) {
+  if (a.sync_status === 'syncing') return 'senkronize ediliyor…';
+  if (a.sync_status === 'error') return `hata: ${a.last_sync_error || 'bilinmiyor'}`;
+  if (a.last_synced_at) return `güncellendi ${formatDateTime(a.last_synced_at)}`;
+  return 'sırada';
+}
+
+function renderAccounts(accounts) {
+  const el = document.getElementById('accounts');
+  el.innerHTML = '';
+  accounts.forEach(a => {
+    const chip = document.createElement('span');
+    chip.className = 'account-chip';
+    const dot = document.createElement('span');
+    dot.className = `status-dot ${a.sync_status || ''}`;
+    const name = document.createElement('strong');
+    name.textContent = `${PLATFORM_NAMES[a.platform] || a.platform} · ${a.name}`;
+    const status = document.createElement('span');
+    status.textContent = accountStatusText(a);
+    chip.append(dot, name, status);
+    el.appendChild(chip);
+  });
+}
+
+// Bağlanan hesap arka planda senkronize edilirken birkaç saniyede bir durumu
+// yokla; bitince metrikleri yeniden yükle.
+async function refreshAccounts() {
+  const res = await api('/api/me');
+  const me = await res.json();
+  document.getElementById('user-email').textContent = me.email;
+  renderAccounts(me.accounts);
+
+  const syncing = me.accounts.some(a => a.sync_status === 'syncing');
+  if (syncing && !pollTimer) {
+    pollTimer = setInterval(refreshAccounts, 3000);
+  } else if (!syncing && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    notice.className = 'notice';
+    load();
+  }
+}
+
+const ytForm = document.getElementById('youtube-form');
+const ytInput = document.getElementById('youtube-handle');
+document.getElementById('youtube-connect-btn').addEventListener('click', () => {
+  ytForm.classList.add('open');
+  ytInput.focus();
+});
+document.getElementById('youtube-cancel').addEventListener('click', () => {
+  ytForm.classList.remove('open');
+});
+ytForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = document.getElementById('youtube-submit');
+  submit.disabled = true;
+  try {
+    const res = await api('/connect/youtube', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle: ytInput.value }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showNotice(body.detail || 'Kanal bağlanamadı.', 'error');
+      return;
+    }
+    ytForm.classList.remove('open');
+    ytInput.value = '';
+    showNotice(`${body.channel} bağlandı. Videolar arka planda çekiliyor, birazdan burada görünecek.`);
+    refreshAccounts();
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+if (new URLSearchParams(window.location.search).get('baglandi') === 'instagram') {
+  showNotice('Instagram bağlandı. Gönderiler arka planda çekiliyor, birazdan burada görünecek.');
+  history.replaceState(null, '', '/');
+}
+
+refreshAccounts();
 load();
 </script>
 </body>

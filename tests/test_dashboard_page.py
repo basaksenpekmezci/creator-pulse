@@ -116,3 +116,42 @@ def test_trend_chart_is_removed():
     app = FastAPI()
     app.include_router(dashboard.router)
     assert TestClient(app).get("/api/metrics/trend").status_code == 404
+
+
+def test_connect_buttons_and_youtube_form():
+    root = page()
+    bar = by_id(root, "connect-bar")
+    yt_btn = by_id(root, "youtube-connect-btn")
+    ig_btn = by_id(root, "instagram-connect-btn")
+    assert bar in yt_btn.ancestors() and bar in ig_btn.ancestors()
+    assert yt_btn.text.strip() == "YouTube bağla"
+    assert ig_btn.text.strip() == "Instagram bağla"
+    # Instagram OAuth akışını başlatır.
+    assert ig_btn.tag == "a" and ig_btn.attrs["href"] == "/connect/instagram"
+    # YouTube kanal adı dashboard'da girilir, terminal gerekmez.
+    form = by_id(root, "youtube-form")
+    assert by_id(root, "youtube-handle").attrs["name"] == "handle"
+    assert form in by_id(root, "youtube-submit").ancestors()
+    source = TEMPLATE.read_text(encoding="utf-8")
+    assert "api('/connect/youtube'" in source
+
+
+def test_no_terminal_instructions_left():
+    source = TEMPLATE.read_text(encoding="utf-8")
+    assert "curl" not in source
+    assert "/sync/youtube" not in source
+
+
+def test_logout_button_posts_to_logout():
+    root = page()
+    button = by_id(root, "logout-btn")
+    form = next(n for n in button.ancestors() if n.tag == "form")
+    assert form.attrs["method"] == "post" and form.attrs["action"] == "/logout"
+    assert by_id(root, "user-email") is not None
+
+
+def test_dashboard_polls_while_syncing_and_handles_expired_session():
+    source = TEMPLATE.read_text(encoding="utf-8")
+    assert "res.status === 401" in source and "window.location.href = '/login'" in source
+    assert "a.sync_status === 'syncing'" in source
+    assert "setInterval(refreshAccounts" in source

@@ -1,8 +1,8 @@
 """
 Veri modeli — workflow.html'deki ER diyagramının kod karşılığı.
 
-User: uygulamayı kullanan kişi (MVP'de sadece sen olacaksın ama şema
-      baştan çok-kullanıcılı düşünülmüş durumda).
+User: uygulamayı kullanan kişi. E-posta + bcrypt ile hash'lenmiş şifreyle
+      giriş yapar; her kullanıcı sadece kendi hesaplarını ve verisini görür.
 PlatformAccount: bir kullanıcının bağladığı her platform hesabı
       (instagram / youtube / tiktok / x). Token'lar şifreli saklanır.
 ContentMetric: her içerik (video/post) için çekilen anlık istatistik.
@@ -32,6 +32,9 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # bcrypt hash'i; düz şifre hiçbir yerde saklanmaz. Kullanıcı sisteminden
+    # önceki ortak kullanıcının şifresi olmadığı için boş olabilir.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     accounts: Mapped[list["PlatformAccount"]] = relationship(
@@ -57,6 +60,14 @@ class PlatformAccount(Base):
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Senkronizasyon durumu: dashboard bağlanan hesabın arka planda
+    # senkronize edildiğini göstermek, zamanlayıcı da hangi hesabın günlük
+    # güncellemesinin geldiğini bulmak için kullanır.
+    # sync_status: "syncing" | "ok" | "error" (henüz hiç denenmediyse None)
+    sync_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="accounts")
     metrics: Mapped[list["ContentMetric"]] = relationship(
